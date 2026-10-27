@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, request
 from db import recipes, users
-from werkzeug.security import generate_password_hash
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 
@@ -136,6 +136,33 @@ def register():
         "username": username,
         "role": "user"
     }), 201
+
+
+# Check a user's username and password.
+@app.route("/auth/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required"}), 400
+
+    username = data.get("username")
+    password = data.get("password")
+
+    if not isinstance(username, str) or not isinstance(password, str):
+        return jsonify({"message": "Username and password are required"}), 400
+
+    user = users.find_one({"username": username.strip()})
+
+    if user is None or not check_password_hash(user["password_hash"], password):
+        return jsonify({"message": "Invalid username or password"}), 401
+
+    return jsonify({
+        "message": "Login successful",
+        "username": user["username"],
+        "role": user["role"]
+    }), 200
+
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
