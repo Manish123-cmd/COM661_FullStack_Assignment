@@ -7,3 +7,4 @@ client = MongoClient(
 
 db = client["receipes_db"]
 recipes = db["recipes"]
+users = db["users"]
