@@ -3,8 +3,18 @@ from db import recipes, users
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 import datetime
+from functools import wraps
+import os
+
 
 app = Flask(__name__)
+
+# Read the secret key used to sign and check tokens.
+app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY")
+
+if not app.config["JWT_SECRET_KEY"]:
+    raise RuntimeError("Set the JWT_SECRET_KEY environment variable first.")
+
 
 
 # Get a paginated list of recipes, with an optional ingredient search.
@@ -140,6 +150,33 @@ def register():
     }), 201
 
 
+# Check the login token before allowing a protected request.
+def jwt_required(func):
+    @wraps(func)
+    def jwt_required_wrapper(*args, **kwargs):
+        authorization = request.headers.get("Authorization", "")
+
+        if not authorization.startswith("Bearer "):
+            return jsonify({"message": "Bearer token is required"}), 401
+
+        token = authorization[7:].strip()
+
+        try:
+            jwt.decode(
+                token,
+                app.config["JWT_SECRET_KEY"],
+                algorithms=["HS256"],
+                options={"require": ["sub", "exp"]}
+            )
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"message": "Token is invalid"}), 401
+
+        return func(*args, **kwargs)
+
+    return jwt_required_wrapper
+
 # Check the username and password, then create a login token.
 @app.route("/auth/login", methods=["POST"])
 def login():
@@ -176,6 +213,12 @@ def login():
         "role": user["role"],
         "token": token
     }), 200
+
+# Test whether a valid login token was supplied.
+@app.route("/auth/check", methods=["GET"])
+@jwt_required
+def check_login():
+    return jsonify({"message": "Token is valid"}), 200
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
