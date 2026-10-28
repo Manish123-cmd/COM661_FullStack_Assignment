@@ -1,6 +1,8 @@
 from flask import Flask, jsonify, request
 from db import recipes, users
 from werkzeug.security import generate_password_hash, check_password_hash
+import jwt
+import datetime
 
 app = Flask(__name__)
 
@@ -138,7 +140,7 @@ def register():
     }), 201
 
 
-# Check a user's username and password.
+# Check the username and password, then create a login token.
 @app.route("/auth/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True)
@@ -157,12 +159,23 @@ def login():
     if user is None or not check_password_hash(user["password_hash"], password):
         return jsonify({"message": "Invalid username or password"}), 401
 
+    # Create a token only after the credentials are correct.
+    token = jwt.encode(
+        {
+            "sub": str(user["_id"]),
+            "exp": datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(minutes=30)
+        },
+        app.config["JWT_SECRET_KEY"],
+        algorithm="HS256"
+    )
+
     return jsonify({
         "message": "Login successful",
         "username": user["username"],
-        "role": user["role"]
+        "role": user["role"],
+        "token": token
     }), 200
-
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
