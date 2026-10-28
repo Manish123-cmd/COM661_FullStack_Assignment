@@ -1,4 +1,5 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, g
+from bson import ObjectId
 from db import recipes, users
 from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
@@ -149,8 +150,7 @@ def register():
         "role": "user"
     }), 201
 
-
-# Check the login token before allowing a protected request.
+# Check the token and find the logged-in user.
 def jwt_required(func):
     @wraps(func)
     def jwt_required_wrapper(*args, **kwargs):
@@ -162,7 +162,7 @@ def jwt_required(func):
         token = authorization[7:].strip()
 
         try:
-            jwt.decode(
+            data = jwt.decode(
                 token,
                 app.config["JWT_SECRET_KEY"],
                 algorithms=["HS256"],
@@ -173,52 +173,32 @@ def jwt_required(func):
         except jwt.InvalidTokenError:
             return jsonify({"message": "Token is invalid"}), 401
 
+        # Check that the token contains a valid MongoDB user ID.
+        if not ObjectId.is_valid(data["sub"]):
+            return jsonify({"message": "Token is invalid"}), 401
+
+        user = users.find_one({"_id": ObjectId(data["sub"])})
+
+        if user is None:
+            return jsonify({"message": "User not found"}), 401
+
+        # Make the account available to the protected function.
+        g.current_user = user
+
         return func(*args, **kwargs)
 
     return jwt_required_wrapper
 
-# Check the username and password, then create a login token.
-@app.route("/auth/login", methods=["POST"])
-def login():
-    data = request.get_json(silent=True)
 
-    if not isinstance(data, dict):
-        return jsonify({"message": "A JSON object is required"}), 400
-
-    username = data.get("username")
-    password = data.get("password")
-
-    if not isinstance(username, str) or not isinstance(password, str):
-        return jsonify({"message": "Username and password are required"}), 400
-
-    user = users.find_one({"username": username.strip()})
-
-    if user is None or not check_password_hash(user["password_hash"], password):
-        return jsonify({"message": "Invalid username or password"}), 401
-
-    # Create a token only after the credentials are correct.
-    token = jwt.encode(
-        {
-            "sub": str(user["_id"]),
-            "exp": datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(minutes=30)
-        },
-        app.config["JWT_SECRET_KEY"],
-        algorithm="HS256"
-    )
-
-    return jsonify({
-        "message": "Login successful",
-        "username": user["username"],
-        "role": user["role"],
-        "token": token
-    }), 200
-
-# Test whether a valid login token was supplied.
+# Show the account identified by the login token.
 @app.route("/auth/check", methods=["GET"])
 @jwt_required
 def check_login():
-    return jsonify({"message": "Token is valid"}), 200
+    return jsonify({
+        "message": "Token is valid",
+        "username": g.current_user["username"],
+        "role": g.current_user["role"]
+    }), 200
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
