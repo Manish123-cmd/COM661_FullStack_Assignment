@@ -5,18 +5,21 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import jwt
 import datetime
 from functools import wraps
-import os
-
+from pathlib import Path
+import secrets
 
 app = Flask(__name__)
 
-# Read the secret key used to sign and check tokens.
-app.config["JWT_SECRET_KEY"] = os.environ.get("JWT_SECRET_KEY")
 
-if not app.config["JWT_SECRET_KEY"]:
-    raise RuntimeError("Set the JWT_SECRET_KEY environment variable first.")
+# Create a secret key on the first run and reuse it on later runs.
+secret_file = Path(__file__).parent / ".jwt_secret"
 
+if not secret_file.exists():
+    secret_file.write_text(secrets.token_hex(32), encoding="utf-8")
 
+app.config["JWT_SECRET_KEY"] = secret_file.read_text(
+    encoding="utf-8"
+).strip()
 
 # Get a paginated list of recipes, with an optional ingredient search.
 @app.route("/guest/recipes", methods=["GET"])
@@ -150,6 +153,7 @@ def register():
         "role": "user"
     }), 201
 
+
 # Check the token and find the logged-in user.
 def jwt_required(func):
     @wraps(func)
@@ -189,6 +193,16 @@ def jwt_required(func):
 
     return jwt_required_wrapper
 
+# Allow access only to a logged-in administrator.
+def admin_required(func):
+    @wraps(func)
+    def admin_required_wrapper(*args, **kwargs):
+        if g.current_user.get("role") != "admin":
+            return jsonify({"message": "Admin access required"}), 403
+
+        return func(*args, **kwargs)
+
+    return admin_required_wrapper
 
 # Show the account identified by the login token.
 @app.route("/auth/check", methods=["GET"])
@@ -199,6 +213,61 @@ def check_login():
         "username": g.current_user["username"],
         "role": g.current_user["role"]
     }), 200
+
+# Let an administrator view recipes using the existing search and pagination.
+@app.route("/admin/recipes", methods=["GET"])
+@jwt_required
+@admin_required
+def get_admin_recipes():
+    return get_recipes()
+
+
+# Let a logged-in user view their own account details.
+@app.route("/user/profile", methods=["GET"])
+@jwt_required
+def get_user_profile():
+    return jsonify({
+        "user_id": str(g.current_user["_id"]),
+        "username": g.current_user["username"],
+        "role": g.current_user["role"]
+    }), 200
+
+# Check the username and password, then create a login token.
+@app.route("/auth/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required"}), 400
+
+    username = data.get("username")
+    password = data.get("password")
+
+    if not isinstance(username, str) or not isinstance(password, str):
+        return jsonify({"message": "Username and password are required"}), 400
+
+    user = users.find_one({"username": username.strip()})
+
+    if user is None or not check_password_hash(user["password_hash"], password):
+        return jsonify({"message": "Invalid username or password"}), 401
+
+    token = jwt.encode(
+        {
+            "sub": str(user["_id"]),
+            "exp": datetime.datetime.now(datetime.timezone.utc)
+            + datetime.timedelta(minutes=30)
+        },
+        app.config["JWT_SECRET_KEY"],
+        algorithm="HS256"
+    )
+
+    return jsonify({
+        "message": "Login successful",
+        "username": user["username"],
+        "role": user["role"],
+        "token": token
+    }), 200
+
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
