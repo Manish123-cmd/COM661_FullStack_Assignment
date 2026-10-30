@@ -400,7 +400,52 @@ def delete_recipe(recipe_id):
 
     return jsonify({"message": "Recipe deleted successfully"}), 200
 
+# Let a logged-in user add a review to a recipe.
+@app.route("/user/recipes/<int:recipe_id>/reviews", methods=["POST"])
+@jwt_required
+def add_review(recipe_id):
+    data = request.get_json(silent=True)
 
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required"}), 400
+
+    rating = data.get("rating")
+    comment = data.get("comment")
+
+    if type(rating) is not int or rating < 1 or rating > 5:
+        return jsonify({
+            "message": "Rating must be a whole number between 1 and 5"
+        }), 400
+
+    if not isinstance(comment, str) or not comment.strip():
+        return jsonify({"message": "Comment is required"}), 400
+
+    # Take the author's identity from the verified login token.
+    review = {
+        "review_id": str(ObjectId()),
+        "user_id": str(g.current_user["_id"]),
+        "username": g.current_user["username"],
+        "rating": rating,
+        "comment": comment.strip(),
+        "date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "source": "application"
+    }
+
+    result = recipes.update_one(
+        {"recipe_id": recipe_id},
+        {"$push": {"reviews": review}}
+    )
+
+    if result.matched_count == 0:
+        return jsonify({"message": "Recipe not found"}), 404
+
+    return jsonify({
+        "message": "Review added successfully",
+        "recipe_id": recipe_id,
+        "review": review
+    }), 201
+
+    
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
     app.run(debug=True, port=5003)
