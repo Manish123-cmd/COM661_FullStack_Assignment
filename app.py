@@ -388,6 +388,18 @@ def update_recipe(recipe_id):
 
     return jsonify({"message": "Recipe updated successfully"}), 200
 
+# Allow an administrator to delete a recipe and its embedded reviews.
+@app.route("/admin/recipes/<int:recipe_id>", methods=["DELETE"])
+@jwt_required
+@admin_required
+def delete_recipe(recipe_id):
+    result = recipes.delete_one({"recipe_id": recipe_id})
+
+    if result.deleted_count == 0:
+        return jsonify({"message": "Recipe not found"}), 404
+
+    return jsonify({"message": "Recipe deleted successfully"}), 200
+
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
