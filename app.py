@@ -331,6 +331,63 @@ def add_recipe():
         "recipe_id": recipe_id
     }), 201
 
+# Allow an administrator to update a recipe's details.
+@app.route("/admin/recipes/<int:recipe_id>", methods=["PUT"])
+@jwt_required
+@admin_required
+def update_recipe(recipe_id):
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required"}), 400
+
+    name = data.get("name")
+    minutes = data.get("minutes")
+
+    if not isinstance(name, str) or not name.strip():
+        return jsonify({"message": "Recipe name is required"}), 400
+
+    if type(minutes) is not int or minutes < 0:
+        return jsonify({"message": "minutes must be a non-negative integer"}), 400
+
+    # Check that these fields contain lists of non-empty strings.
+    for field in ["ingredients", "steps", "tags"]:
+        value = data.get(field)
+
+        if not isinstance(value, list):
+            return jsonify({"message": f"{field} must be a list"}), 400
+
+        if field != "tags" and not value:
+            return jsonify({"message": f"{field} cannot be empty"}), 400
+
+        for item in value:
+            if not isinstance(item, str) or not item.strip():
+                return jsonify({
+                    "message": f"{field} must contain non-empty strings"
+                }), 400
+
+    if not isinstance(data.get("nutrition"), dict):
+        return jsonify({"message": "nutrition must be a JSON object"}), 400
+
+    result = recipes.update_one(
+        {"recipe_id": recipe_id},
+        {
+            "$set": {
+                "name": name.strip(),
+                "minutes": minutes,
+                "ingredients": data["ingredients"],
+                "steps": data["steps"],
+                "tags": data["tags"],
+                "nutrition": data["nutrition"]
+            }
+        }
+    )
+
+    if result.matched_count == 0:
+        return jsonify({"message": "Recipe not found"}), 404
+
+    return jsonify({"message": "Recipe updated successfully"}), 200
+
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
