@@ -445,6 +445,109 @@ def add_review(recipe_id):
         "review": review
     }), 201
 
+# Let a logged-in user view their own application reviews.
+@app.route("/user/reviews", methods=["GET"])
+@jwt_required
+def get_my_reviews():
+    user_id = str(g.current_user["_id"])
+    my_reviews = []
+
+    records = recipes.find(
+        {"reviews.user_id": user_id},
+        {"_id": 0, "recipe_id": 1, "name": 1, "reviews": 1}
+    )
+
+    for recipe in records:
+        for review in recipe.get("reviews", []):
+            if (
+                review.get("user_id") == user_id
+                and review.get("source") == "application"
+            ):
+                my_reviews.append({
+                    "recipe_id": recipe["recipe_id"],
+                    "recipe_name": recipe["name"],
+                    "review": review
+                })
+
+    return jsonify({
+        "total": len(my_reviews),
+        "reviews": my_reviews
+    }), 200
+
+# Let a logged-in user update only their own application review.
+@app.route(
+    "/user/recipes/<int:recipe_id>/reviews/<string:review_id>",
+    methods=["PUT"]
+)
+@jwt_required
+def update_my_review(recipe_id, review_id):
+    data = request.get_json(silent=True)
+
+    if not isinstance(data, dict):
+        return jsonify({"message": "A JSON object is required"}), 400
+
+    rating = data.get("rating")
+    comment = data.get("comment")
+
+    if type(rating) is not int or rating < 1 or rating > 5:
+        return jsonify({
+            "message": "Rating must be a whole number between 1 and 5"
+        }), 400
+
+    if not isinstance(comment, str) or not comment.strip():
+        return jsonify({"message": "Comment is required"}), 400
+
+    recipe = recipes.find_one(
+        {"recipe_id": recipe_id},
+        {"_id": 0, "reviews": 1}
+    )
+
+    if recipe is None:
+        return jsonify({"message": "Recipe not found"}), 404
+
+    selected_review = None
+
+    for review in recipe.get("reviews", []):
+        if review.get("review_id") == review_id:
+            selected_review = review
+            break
+
+    if selected_review is None:
+        return jsonify({"message": "Review not found"}), 404
+
+    user_id = str(g.current_user["_id"])
+
+    if (
+        selected_review.get("source") != "application"
+        or selected_review.get("user_id") != user_id
+    ):
+        return jsonify({
+            "message": "You can only update your own application reviews"
+        }), 403
+
+    result = recipes.update_one(
+        {
+            "recipe_id": recipe_id,
+            "reviews": {
+                "$elemMatch": {
+                    "review_id": review_id,
+                    "user_id": user_id,
+                    "source": "application"
+                }
+            }
+        },
+        {
+            "$set": {
+                "reviews.$.rating": rating,
+                "reviews.$.comment": comment.strip()
+            }
+        }
+    )
+
+    if result.matched_count == 0:
+        return jsonify({"message": "Recipe or review no longer exists"}), 404
+
+    return jsonify({"message": "Review updated successfully"}), 200
 
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
