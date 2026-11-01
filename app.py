@@ -612,7 +612,109 @@ def delete_my_review(recipe_id, review_id):
 
     return jsonify({"message": "Review deleted successfully"}), 200
 
-    
+
+# Allow an administrator to remove a review from a recipe.
+@app.route(
+    "/admin/recipes/<int:recipe_id>/reviews/<string:review_id>",
+    methods=["DELETE"]
+)
+@jwt_required
+@admin_required
+def admin_delete_review(recipe_id, review_id):
+    recipe = recipes.find_one(
+        {"recipe_id": recipe_id},
+        {"_id": 0, "recipe_id": 1}
+    )
+
+    if recipe is None:
+        return jsonify({"message": "Recipe not found"}), 404
+
+    result = recipes.update_one(
+        {"recipe_id": recipe_id},
+        {"$pull": {"reviews": {"review_id": review_id}}}
+    )
+
+    if result.modified_count == 0:
+        return jsonify({"message": "Review not found"}), 404
+
+    return jsonify({"message": "Review removed by administrator"}), 200
+
+# Give administrators recipe counts, average ratings and tag summaries.
+@app.route("/admin/analytics", methods=["GET"])
+@jwt_required
+@admin_required
+def get_analytics():
+    total_recipes = 0
+    total_reviews = 0
+    total_rating = 0
+    rated_reviews = 0
+    recipe_ratings = []
+    tag_counts = {}
+
+    records = recipes.find(
+        {},
+        {"_id": 0, "recipe_id": 1, "name": 1, "reviews": 1, "tags": 1}
+    )
+
+    for recipe in records:
+        total_recipes += 1
+        recipe_rating_total = 0
+        recipe_rating_count = 0
+
+        for review in recipe.get("reviews", []):
+            total_reviews += 1
+            rating = review.get("rating")
+
+            # Include only numeric ratings on the 1–5 scale.
+            if type(rating) in (int, float) and 1 <= rating <= 5:
+                total_rating += rating
+                rated_reviews += 1
+                recipe_rating_total += rating
+                recipe_rating_count += 1
+
+        recipe_average = None
+
+        if recipe_rating_count > 0:
+            recipe_average = round(
+                recipe_rating_total / recipe_rating_count, 2
+            )
+
+        recipe_ratings.append({
+            "recipe_id": recipe["recipe_id"],
+            "name": recipe["name"],
+            "rated_reviews": recipe_rating_count,
+            "average_rating": recipe_average
+        })
+
+        # Count each tag once per recipe.
+        for tag in set(recipe.get("tags", [])):
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    average_rating = None
+
+    if rated_reviews > 0:
+        average_rating = round(total_rating / rated_reviews, 2)
+
+    tag_summary = []
+
+    for tag, count in tag_counts.items():
+        tag_summary.append({
+            "tag": tag,
+            "recipe_count": count
+        })
+
+    tag_summary.sort(key=lambda item: (-item["recipe_count"], item["tag"]))
+    recipe_ratings.sort(key=lambda item: item["recipe_id"])
+
+    return jsonify({
+        "total_recipes": total_recipes,
+        "total_reviews": total_reviews,
+        "rated_reviews": rated_reviews,
+        "average_rating": average_rating,
+        "recipe_ratings": recipe_ratings,
+        "tag_summary": tag_summary
+    }), 200
+
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
     app.run(debug=True, port=5003)
