@@ -7,7 +7,7 @@ import datetime
 from functools import wraps
 from pathlib import Path
 import secrets
-
+import re
 app = Flask(__name__)
 
 
@@ -21,10 +21,12 @@ app.config["JWT_SECRET_KEY"] = secret_file.read_text(
     encoding="utf-8"
 ).strip()
 
-# Get a paginated list of recipes, with an optional ingredient search.
+# Get recipes with ingredient, tag, time filters and pagination.
 @app.route("/guest/recipes", methods=["GET"])
 def get_recipes():
     ingredient = request.args.get("ingredient", "").strip()
+    tag = request.args.get("tag", "").strip()
+    max_minutes = request.args.get("max_minutes")
 
     try:
         page = int(request.args.get("page", 1))
@@ -41,11 +43,35 @@ def get_recipes():
 
     query = {}
 
+    # Search for an ingredient, ignoring capital letters.
     if ingredient:
         query["ingredients"] = {
-            "$regex": ingredient,
+            "$regex": re.escape(ingredient),
             "$options": "i"
         }
+
+    # Match a complete tag, ignoring capital letters.
+    if tag:
+        query["tags"] = {
+            "$regex": "^" + re.escape(tag) + "$",
+            "$options": "i"
+        }
+
+    # Only include recipes within the requested cooking time.
+    if max_minutes is not None:
+        try:
+            max_minutes = int(max_minutes)
+        except ValueError:
+            return jsonify({
+                "message": "max_minutes must be a whole number"
+            }), 400
+
+        if max_minutes < 0:
+            return jsonify({
+                "message": "max_minutes must be at least 0"
+            }), 400
+
+        query["minutes"] = {"$lte": max_minutes}
 
     total = recipes.count_documents(query)
 
@@ -62,7 +88,6 @@ def get_recipes():
         "total": total,
         "recipes": records
     }), 200
-
 
 # Get the full details of one recipe using its recipe ID.
 @app.route("/guest/recipes/<int:recipe_id>", methods=["GET"])
