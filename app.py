@@ -549,6 +549,70 @@ def update_my_review(recipe_id, review_id):
 
     return jsonify({"message": "Review updated successfully"}), 200
 
+
+# Let a logged-in user delete only their own application review.
+@app.route(
+    "/user/recipes/<int:recipe_id>/reviews/<string:review_id>",
+    methods=["DELETE"]
+)
+@jwt_required
+def delete_my_review(recipe_id, review_id):
+    recipe = recipes.find_one(
+        {"recipe_id": recipe_id},
+        {"_id": 0, "reviews": 1}
+    )
+
+    if recipe is None:
+        return jsonify({"message": "Recipe not found"}), 404
+
+    selected_review = None
+
+    for review in recipe.get("reviews", []):
+        if review.get("review_id") == review_id:
+            selected_review = review
+            break
+
+    if selected_review is None:
+        return jsonify({"message": "Review not found"}), 404
+
+    user_id = str(g.current_user["_id"])
+
+    if (
+        selected_review.get("source") != "application"
+        or selected_review.get("user_id") != user_id
+    ):
+        return jsonify({
+            "message": "You can only delete your own application reviews"
+        }), 403
+
+    result = recipes.update_one(
+        {
+            "recipe_id": recipe_id,
+            "reviews": {
+                "$elemMatch": {
+                    "review_id": review_id,
+                    "user_id": user_id,
+                    "source": "application"
+                }
+            }
+        },
+        {
+            "$pull": {
+                "reviews": {
+                    "review_id": review_id,
+                    "user_id": user_id,
+                    "source": "application"
+                }
+            }
+        }
+    )
+
+    if result.modified_count == 0:
+        return jsonify({"message": "Recipe or review no longer exists"}), 404
+
+    return jsonify({"message": "Review deleted successfully"}), 200
+
+    
 # Start the Flask development server on port 5003.
 if __name__ == "__main__":
     app.run(debug=True, port=5003)
